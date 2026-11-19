@@ -193,7 +193,22 @@ export function hubRemote(profile = profileFromUrl()): Remote {
           body: JSON.stringify({ session }),
         });
         const j = await r.json() as { ok: boolean; heldBy?: { device: string } | null };
-        if (!j.ok) { held = false; stopBeat(); api.onLost?.(j.heldBy ?? null); }
+        if (j.ok) return;
+        /* NOT HELD IS NOT TAKEN. The hub drops a claim that goes 35 s without a
+           beat, and a tab left in the background (Chrome slows its timers to one
+           a minute after five minutes) or a sleeping PC misses that easily. Then
+           NOBODY holds the profile, and it is still ours: claim it back. Only
+           another session holding it means we lost it. Reading "not held" as
+           "taken over" stopped the game saving anywhere, for the rest of that
+           tab's life, under a toast blaming another device: 18 Nov, a whole
+           day of Hides play never saved. */
+        if (!j.heldBy) {
+          const again = await api.claim();      // a fresh beat starts on success
+          if (again.ok || again.offline) return;  // offline: keep beating, it comes back
+          held = false; stopBeat(); api.onLost?.(again.heldBy ?? null);
+          return;
+        }
+        held = false; stopBeat(); api.onLost?.(j.heldBy);
       } catch { /* a blip is not a takeover; keep going */ }
     }, BEAT_MS);
     window.addEventListener('pagehide', api.release, { once: true });
